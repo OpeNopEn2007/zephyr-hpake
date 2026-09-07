@@ -140,7 +140,19 @@ struct bt_smp_keypress_notif {
 	uint8_t type;
 } __packed;
 
-#define BT_SMP_NUM_CMDS                         0x0f
+#define BT_SMP_CMD_SPAKE_POINT                  0x0f
+#define BT_SMP_NUM_CMDS                         0x10
+
+#if defined(CONFIG_BT_TESTING)
+/* Fault injection affects only the next outgoing experimental point. */
+enum bt_spake_test_fault {
+	BT_SPAKE_TEST_NONE,
+	BT_SPAKE_TEST_INVALID_POINT,
+	BT_SPAKE_TEST_DUPLICATE_POINT,
+};
+
+void bt_smp_spake_test_fault(enum bt_spake_test_fault fault);
+#endif
 
 int bt_smp_start_security(struct bt_conn *conn);
 bool bt_smp_request_ltk(struct bt_conn *conn, uint64_t rand, uint16_t ediv,

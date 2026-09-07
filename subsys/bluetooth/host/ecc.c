@@ -27,6 +27,10 @@
 
 #include "common/long_wq.h"
 #include "ecc.h"
+#if defined(CONFIG_BT_SMP)
+#include "crypto/bt_spake.h"
+#include <mbedtls/platform_util.h>
+#endif
 #include "hci_core.h"
 
 #define LOG_LEVEL CONFIG_BT_HCI_CORE_LOG_LEVEL
@@ -35,6 +39,23 @@ LOG_MODULE_REGISTER(bt_ecc);
 static uint8_t pub_key[BT_PUB_KEY_LEN];
 static sys_slist_t pub_key_cb_slist;
 static bt_dh_key_cb_t dh_key_cb;
+
+#if defined(CONFIG_BT_SMP)
+static uint8_t point_result[64];
+static bt_dh_point_cb_t point_cb;
+static void *point_user;
+
+static void point_ready(const uint8_t *key)
+{
+	bt_dh_point_cb_t cb = point_cb;
+	void *user = point_user;
+
+	point_cb = NULL;
+	point_user = NULL;
+	cb(key ? point_result : NULL, user);
+	mbedtls_platform_zeroize(point_result, sizeof(point_result));
+}
+#endif
 
 static void generate_pub_key(struct k_work *work);
 static void generate_dh_key(struct k_work *work);
@@ -211,6 +232,15 @@ static void generate_dh_key(struct k_work *work)
 	const uint8_t *priv_key = (IS_ENABLED(CONFIG_BT_USE_DEBUG_KEYS) ?
 				   debug_private_key_be :
 				   ecc.private_key_be);
+#if defined(CONFIG_BT_SMP)
+	if (dh_key_cb == point_ready) {
+		err = bt_spake_point_mul(priv_key, ecc.public_key_be, point_result);
+		if (!err) {
+			memcpy(ecc.dhkey_be, point_result, BT_DH_KEY_LEN);
+		}
+		goto exit;
+	}
+#endif
 	ret = psa_import_key(&attr, priv_key, BT_PRIV_KEY_LEN, &key_id);
 	if (ret != PSA_SUCCESS) {
 		err = -EIO;
@@ -386,3 +416,28 @@ bt_dh_key_cb_t *bt_ecc_get_dh_key_cb(void)
 	return &dh_key_cb;
 }
 #endif /* ZTEST_UNITTEST */
+
+#if defined(CONFIG_BT_SMP)
+int bt_dh_point_gen(const uint8_t remote_pk[64], bt_dh_point_cb_t cb, void *user)
+{
+	int err;
+
+	if (!cb) {
+		return -EINVAL;
+	}
+	k_sched_lock();
+	if (point_cb || dh_key_cb) {
+		k_sched_unlock();
+		return -EBUSY;
+	}
+	point_cb = cb;
+	point_user = user;
+	err = bt_dh_key_gen(remote_pk, point_ready);
+	if (err) {
+		point_cb = NULL;
+		point_user = NULL;
+	}
+	k_sched_unlock();
+	return err;
+}
+#endif

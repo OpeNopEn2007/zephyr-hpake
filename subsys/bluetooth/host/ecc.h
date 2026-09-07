@@ -107,3 +107,9 @@ typedef void (*bt_dh_key_cb_t)(const uint8_t key[BT_DH_KEY_LEN]);
  *  @return Zero on success or negative error code otherwise
  */
 int bt_dh_key_gen(const uint8_t remote_pk[BT_PUB_KEY_LEN], bt_dh_key_cb_t cb);
+
+#if defined(CONFIG_BT_SMP)
+/* Experimental full-point interface; callback borrows a big-endian X || Y. */
+typedef void (*bt_dh_point_cb_t)(const uint8_t point[64], void *user);
+int bt_dh_point_gen(const uint8_t remote_pk[64], bt_dh_point_cb_t cb, void *user);
+#endif

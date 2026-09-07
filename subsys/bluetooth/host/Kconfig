@@ -421,12 +421,19 @@ config BT_REMOTE_INFO
 
 config BT_SMP
 	bool "Security Manager Protocol support"
+	select BT_SMP_SC_PAIR_ONLY
+	select MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+	select MBEDTLS_ENABLE_HEAP
+	select PSA_WANT_ALG_SHA_256
+	select BT_LONG_WQ
 	select BT_CRYPTO
 	select BT_RPA
 	select BT_ECC if !BT_SMP_OOB_LEGACY_PAIR_ONLY
 	help
 	  This option enables support for the Security Manager Protocol
 	  (SMP), making it possible to pair devices over LE.
+	  On this research branch, SC Passkey Entry uses direct SPAKE with
+	  M = abG and N = G. Native PE is kept on the main Git branch.
 
 if BT_SMP
 
@@ -1020,7 +1027,7 @@ config BT_ECC
 	select PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_IMPORT
 	select PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_EXPORT
 	select PSA_WANT_ECC_SECP_R1_256
-	imply MBEDTLS_PSA_P256M_DRIVER_ENABLED if MBEDTLS_PSA_CRYPTO_C
+	imply MBEDTLS_PSA_P256M_DRIVER_ENABLED if MBEDTLS_PSA_CRYPTO_C && !BT_SMP
 	help
 	  If this option is set, internal APIs will be available to perform ECDH operations through
 	  the long work queue (or system work queue). The operations are used e.g. by LE Secure
