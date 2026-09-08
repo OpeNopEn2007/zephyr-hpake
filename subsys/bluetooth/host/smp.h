@@ -152,6 +152,38 @@ enum bt_spake_test_fault {
 };
 
 void bt_smp_spake_test_fault(enum bt_spake_test_fault fault);
+
+/* EXP-001 adversary endpoint support. Points use the internal big-endian
+ * X||Y encoding from bt_spake.h (no SEC1 prefix); addresses and nonces use
+ * the on-wire byte order.
+ */
+struct bt_smp_spake_test_snapshot {
+	uint8_t preq[7];			/* Pairing Request incl. opcode   */
+	uint8_t prsp[7];			/* Pairing Response incl. opcode  */
+	uint8_t a[7];				/* initiator addr, type + 6 bytes */
+	uint8_t b[7];				/* responder addr, type + 6 bytes */
+	uint8_t pka[64];				/* initiator public key       */
+	uint8_t pkb[64];				/* responder public key       */
+	uint8_t m[64];					/* full initial DH point       */
+	uint8_t peer_point[64];			/* received experimental point */
+	uint8_t sent_point[64];			/* point this endpoint sent    */
+	uint8_t secret[32];				/* own ephemeral scalar (B-view) */
+	uint8_t prnd[16];				/* own nonce                */
+	uint8_t rrnd[16];				/* peer nonce               */
+	uint8_t ea[16];				/* received DHKey Check        */
+	bool ea_received;
+};
+
+/* One-shot: the next outgoing experimental point PDU of this device
+ * carries these bytes instead of the locally computed masked point.
+ */
+void bt_smp_spake_test_send_point(const uint8_t point[64]);
+
+/* Copy the latched view of the most recent pairing attempt in which this
+ * (responder) endpoint received a DHKey Check. The latch is cleared when a
+ * new pairing attempt starts. Returns -EAGAIN when nothing is latched.
+ */
+int bt_smp_spake_test_snapshot(struct bt_smp_spake_test_snapshot *out);
 #endif
 
 int bt_smp_start_security(struct bt_conn *conn);

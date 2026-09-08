@@ -3706,6 +3706,74 @@ void bt_smp_spake_test_fault(enum bt_spake_test_fault fault)
 {
 	spake_fault = fault;
 }
+
+static bool spake_send_point_armed;
+static uint8_t spake_send_point[64];
+static struct bt_smp_spake_test_snapshot spake_test_snap;
+static bool spake_test_snap_valid;
+/* bt_spake_clear() wipes the live crypto context right after derivation,
+ * while the DHKey Check arrives later: the transcript inputs are copied
+ * into test-owned storage at their arrival/send time instead.
+ */
+static uint8_t spake_test_m[64];
+static uint8_t spake_test_peer[64];
+static uint8_t spake_test_sent[64];
+static uint8_t spake_test_secret[32];
+static bool spake_test_m_valid;
+static bool spake_test_peer_valid;
+static bool spake_test_sent_valid;
+static bool spake_test_secret_valid;
+
+void bt_smp_spake_test_send_point(const uint8_t point[64])
+{
+	memcpy(spake_send_point, point, 64);
+	spake_send_point_armed = true;
+}
+
+int bt_smp_spake_test_snapshot(struct bt_smp_spake_test_snapshot *out)
+{
+	if (!spake_test_snap_valid) {
+		return -EAGAIN;
+	}
+	memcpy(out, &spake_test_snap, sizeof(*out));
+	return 0;
+}
+
+/* Latch the responder-visible transcript when its DHKey Check arrives.
+ * Mirrors the field mapping of spake_derive_key(); the central (honest A)
+ * receive path is intentionally untouched.
+ */
+static void spake_test_latch_ea(struct bt_smp *smp, const uint8_t ea[16])
+{
+	struct bt_smp_spake_test_snapshot *snap = &spake_test_snap;
+	bool central = smp->chan.chan.conn->role == BT_HCI_ROLE_CENTRAL;
+
+	if (!spake_test_m_valid || !spake_test_peer_valid || !spake_test_sent_valid ||
+	    !spake_test_secret_valid) {
+		LOG_WRN("SPAKE testing: incomplete transcript inputs, not latching");
+		return;
+	}
+	memcpy(snap->preq, smp->preq, sizeof(snap->preq));
+	memcpy(snap->prsp, smp->prsp, sizeof(snap->prsp));
+	snap->a[0] = smp->chan.chan.conn->le.init_addr.type;
+	memcpy(snap->a + 1, smp->chan.chan.conn->le.init_addr.a.val, 6);
+	snap->b[0] = smp->chan.chan.conn->le.resp_addr.type;
+	memcpy(snap->b + 1, smp->chan.chan.conn->le.resp_addr.a.val, 6);
+	bt_spake_point_swap(snap->pka,
+			    central ? sc_public_key : smp->pkey);
+	bt_spake_point_swap(snap->pkb,
+			    central ? smp->pkey : sc_public_key);
+	memcpy(snap->m, spake_test_m, sizeof(snap->m));
+	memcpy(snap->peer_point, spake_test_peer, sizeof(snap->peer_point));
+	memcpy(snap->sent_point, spake_test_sent, sizeof(snap->sent_point));
+	memcpy(snap->secret, spake_test_secret, sizeof(snap->secret));
+	memcpy(snap->prnd, smp->prnd, sizeof(snap->prnd));
+	memcpy(snap->rrnd, smp->rrnd, sizeof(snap->rrnd));
+	memcpy(snap->ea, ea, sizeof(snap->ea));
+	snap->ea_received = true;
+	spake_test_snap_valid = true;
+	LOG_INF("SPAKE direct v1: testing latched transcript on Ea");
+}
 #endif
 
 static uint32_t spake_generation;
@@ -3741,6 +3809,11 @@ static void spake_worker(struct k_work *work)
 				memcpy(smp->spake.crypto.secret, crypto.secret, 32);
 				memcpy(smp->spake.crypto.local, crypto.local, 64);
 				smp->spake.local_ready = true;
+#if defined(CONFIG_BT_TESTING)
+				/* B-view ephemeral for the honest-mode KAT. */
+				memcpy(spake_test_secret, crypto.secret, 32);
+				spake_test_secret_valid = true;
+#endif
 			} else {
 				memcpy(smp->spake.crypto.shared, crypto.shared, 64);
 				smp->spake.shared_ready = true;
@@ -3826,7 +3899,22 @@ static uint8_t spake_progress_locked(struct bt_smp *smp)
 		if (!buf) {
 			return BT_SMP_ERR_UNSPECIFIED;
 		}
+#if defined(CONFIG_BT_TESTING)
+	{
+		const uint8_t *pt = smp->spake.crypto.local;
+
+		if (spake_send_point_armed) {
+			spake_send_point_armed = false;
+			pt = spake_send_point;
+			LOG_INF("SPAKE direct v1: testing sends chosen point");
+		}
+		memcpy(spake_test_sent, pt, 64);
+		spake_test_sent_valid = true;
+		bt_spake_point_swap(net_buf_add(buf, 64), pt);
+	}
+#else
 		bt_spake_point_swap(net_buf_add(buf, 64), smp->spake.crypto.local);
+#endif
 #if defined(CONFIG_BT_TESTING)
 		enum bt_spake_test_fault fault = spake_fault;
 
@@ -3902,6 +3990,10 @@ static uint8_t spake_point(struct bt_smp *smp, struct net_buf *buf)
 {
 	bt_spake_point_swap(smp->spake.crypto.peer, buf->data);
 	smp->spake.peer_ready = true;
+#if defined(CONFIG_BT_TESTING)
+	memcpy(spake_test_peer, smp->spake.crypto.peer, 64);
+	spake_test_peer_valid = true;
+#endif
 	LOG_INF("SPAKE direct v1: received masked point");
 	return spake_progress(smp);
 }
@@ -3923,6 +4015,10 @@ static void spake_dh_ready(const uint8_t *point, void *user)
 	}
 	memcpy(smp->spake.crypto.m, point, 64);
 	smp->spake.m_ready = true;
+#if defined(CONFIG_BT_TESTING)
+	memcpy(spake_test_m, point, 64);
+	spake_test_m_valid = true;
+#endif
 	LOG_INF("SPAKE direct v1: full initial DH point ready");
 	err = spake_progress(smp);
 	if (err) {
@@ -3942,6 +4038,13 @@ static uint8_t spake_begin(struct bt_smp *smp)
 	}
 	smp->spake.generation = spake_generation;
 	smp->spake.crypto.central = smp->chan.chan.conn->role == BT_HCI_ROLE_CENTRAL;
+#if defined(CONFIG_BT_TESTING)
+	spake_test_snap_valid = false;
+	spake_test_m_valid = false;
+	spake_test_peer_valid = false;
+	spake_test_sent_valid = false;
+	spake_test_secret_valid = false;
+#endif
 	if (!smp->spake.crypto.central) {
 		atomic_set_bit(smp->allowed_cmds, BT_SMP_CMD_SPAKE_POINT);
 	}
@@ -4502,6 +4605,12 @@ static uint8_t smp_dhkey_check(struct bt_smp *smp, struct net_buf *buf)
 	if (smp->chan.chan.conn->role == BT_HCI_ROLE_PERIPHERAL) {
 		atomic_clear_bit(smp->flags, SMP_FLAG_DHCHECK_WAIT);
 		memcpy(smp->e, req->e, sizeof(smp->e));
+#if defined(CONFIG_BT_TESTING)
+		/* EXP-001: latch the responder-visible transcript before any
+		 * verification outcome can alter or tear down pairing state.
+		 */
+		spake_test_latch_ea(smp, req->e);
+#endif
 
 		/* wait for DHKey being generated */
 		if (atomic_test_bit(smp->flags, SMP_FLAG_DHKEY_PENDING)) {
