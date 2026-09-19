@@ -271,7 +271,7 @@ static void encrypted_echo(void)
 
 static void run(bool central)
 {
-	TEST_START("SPAKE direct regression");
+	TEST_START("SPAKE RFC9382-N regression");
 	is_central = central;
 	TEST_ASSERT(bk_sync_init() == 0, "Sync init failed");
 	TEST_ASSERT(bt_enable(NULL) == 0, "Bluetooth init failed");
@@ -345,7 +345,7 @@ static void run(bool central)
 		k_sleep(K_MSEC(100));
 		barrier();
 	}
-	TEST_PASS("All SPAKE direct scenarios passed");
+	TEST_PASS("All SPAKE RFC9382-N scenarios passed");
 }
 
 static void central(void) { run(true); }

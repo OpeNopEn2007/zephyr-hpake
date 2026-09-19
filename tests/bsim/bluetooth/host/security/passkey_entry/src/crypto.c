@@ -8,8 +8,8 @@
 
 void test_spake_crypto(void)
 {
-	struct bt_spake_direct a = {.central = true, .password = 123456};
-	struct bt_spake_direct b = {.central = false, .password = 123456};
+	struct bt_spake_context a = {.central = true, .password = 123456};
+	struct bt_spake_context b = {.central = false, .password = 123456};
 	struct bt_spake_transcript t;
 	uint8_t scalar[32] = {0}, point[64], ka[32], kb[32];
 
@@ -57,6 +57,18 @@ void test_spake_crypto(void)
 	TEST_ASSERT(memcmp(a.shared, vector_shared, 64) == 0 &&
 		    memcmp(b.shared, vector_shared, 64) == 0, "Zero shared differs");
 
+	/* Upper passkey boundary: both roles must agree on the same xyG and K. */
+	a.password = b.password = 999999;
+	TEST_ASSERT(bt_spake_mask(&a) == 0 && bt_spake_mask(&b) == 0, "Max mask failed");
+	memcpy(a.peer, b.local, 64);
+	memcpy(b.peer, a.local, 64);
+	TEST_ASSERT(bt_spake_shared(&a) == 0 && bt_spake_shared(&b) == 0, "Max unmask");
+	TEST_ASSERT(memcmp(a.shared, vector_shared, 64) == 0 &&
+		    memcmp(b.shared, vector_shared, 64) == 0, "Max shared differs");
+	TEST_ASSERT(bt_spake_derive(&a, &t, ka) == 0 && bt_spake_derive(&b, &t, kb) == 0,
+		    "Max KDF failed");
+	TEST_ASSERT(memcmp(ka, kb, 32) == 0, "Max passwords produced different keys");
+
 	a.password = 123456;
 	b.password = 123457;
 	TEST_ASSERT(bt_spake_mask(&a) == 0 && bt_spake_mask(&b) == 0, "Mismatch mask");
@@ -71,5 +83,5 @@ void test_spake_crypto(void)
 	bt_spake_clear(&a);
 	bt_spake_clear(&b);
 	TEST_ASSERT(memcmp(&a, &b, sizeof(a)) == 0, "Context cleanup failed");
-	printk("SPAKE crypto: independent vectors, zero, mismatch and invalid point passed\n");
+	printk("SPAKE crypto: independent vectors, zero, max, mismatch and invalid point passed\n");
 }

@@ -1,4 +1,4 @@
-# SPAKE 直接替换实验 v1
+# SPAKE 固定 RFC 9382 辅助点实验 v3
 
 本实验针对两台修改后的 Zephyr 设备，先验证配对与加密通信能否跑通。
 本分支直接以 SPAKE 替换原生 PE，没有原生/实验切换开关，原生基线保存在 Git `main` 分支。
@@ -8,7 +8,8 @@
 ## 协议与编码
 
 A 为 Central，B 为 Peripheral。保留首轮 P-256 公钥交换，完整共享点为
-`M = abG`，固定辅助点 `N = G`。六位口令直接编码为整数 `w ∈ [0, 999999]`，
+`M = abG`，固定辅助点 `N = RFC 9382 §6 公布的 P-256 N`。
+六位口令直接编码为整数 `w ∈ [0, 999999]`，
 包括 `000000`。每次实验认证重新生成非零随机标量 x、y：
 
 ```text
@@ -19,7 +20,7 @@ ZA = x(Y* - wN)              ZB = y(X* - wM)
 使用论文 SPAKE2 的口令绑定思想，按以下固定顺序计算 SHA-256，输出 32 字节 K：
 
 ```text
-"BLE-SPAKE-DIRECT-v1" || A || B || PairingRequest || PairingResponse ||
+"BLE-SPAKE-RFC9382-N-v3" || A || B || PairingRequest || PairingResponse ||
 PKA || PKB || M || N || X* || Y* || w || Z || Na || Nb
 ```
 
@@ -31,25 +32,41 @@ PKA || PKB || M || N || X* || Y* || w || Z || Na || Nb
 - K 按现有 `bt_crypto_f5()` 的小端 W 输入约定转换后取代原 DHKey 输入，
   继续生成 MacKey/LTK。f6 保留原有口令 R、角色和地址处理；随后完成 DHKey Check 与链路加密。
 
-本实例化不采用 RFC 9382 的固定 M/N、口令预处理或完整密钥调度，不应标称 RFC 互通实现。
-`N = G` 存在具体的一次主动会话后离线枚举路径，见下节；本分支保存功能实验，
-不满足项目最终的抗离线猜测目标。跑通、L4 和拒绝错口令均不构成安全证明。
+本实例化仅采用 RFC 9382 的固定 N，仍使用动态 M 和自定义口令编码、密钥调度，不应标称 RFC 互通实现。
+本分支保存第二种参数构造的功能实验，整体抗离线猜测安全性仍待分析。
+跑通、L4 和拒绝错口令均不构成安全证明。第一版保存在 `spake/direct-replacement`
+的提交 `2978fed9cc7`；本版 KDF 标签与 N 均已改变，不与第一版或原生 BLE 互通。
 
-### 已知协议缺陷
+### 参数生成与安全边界
 
-恶意 B 选择自己的初始私钥 b，因而可计算 `M = b·PKA`，并发送 `Y* = tG`。
-A 计算 `ZA = x(t-w)G`，随后先发送 DHKey Check `Ea`。
-对每个候选 w'，B 可以仅凭自身信息和收到的消息计算：
+- 来源：[RFC 9382 §6](https://www.rfc-editor.org/rfc/rfc9382.html#section-6) 的 P-256 N。
+- 直接采用公开点；不自行采样，不执行 RFC 9380 HashToCurve。
+- 开发时把 33 字节 SEC1 压缩点解码为 64 字节大端 X||Y；固件不解压、不额外传输 N。
+- RFC 的 03 前缀指定 Y 的奇偶性，不能作为 X 坐标的一部分存入 64 字节缓冲区。
 
 ```text
-U' = X* - w'M
-Z' = ((t-w') mod q) U'
-K' -> f5 -> f6 -> Ea'
+压缩 N = 03d8bbd6c639c62937b04d997f38c3770719c629d7014d49a24b4f98baa1292b49
+X = d8bbd6c639c62937b04d997f38c3770719c629d7014d49a24b4f98baa1292b49
+Y = 07d60aa6bfade45008a636337f5168c64d9bd36034808cd564490b1e656edbe7
 ```
 
-q 为 P-256 群阶。猜中时 Z' 等于 ZA，使用相同会话编码得到的 Ea' 等于记录的 Ea，
-无需再次向 A 验证。该结论不依赖求解离散对数，也不声称被动观察者能得到 M。
-后续独立实验应从实际线上消息验证这条路径；本目录的集成测试和 KAT 不包含完整枚举实验。
+第一版 N=G 时，恶意 B 发送 Y*=tG，可用每个猜测 w' 计算
+`Z' = (t-w')(X*-w'M)` 并重建确认值。第二版 A 计算的是 `x(tG-wN)`，
+因此旧公式不能原样沿用。这不是全协议安全证明：动态 M、主动选择的前置公钥、
+并发会话及本项目 KDF/f5/f6 的组合仍需单独分析。
+
+在工作区根执行以下命令，解码 RFC 常量、核验曲线和阶、重新压缩比对，
+再逐字节核对固件 N。输出 JSON 保存来源及两种编码：
+
+```sh
+python3 main/tests/bsim/bluetooth/host/security/passkey_entry/tools/rfc9382_basis.py \
+  --check main/subsys/bluetooth/crypto/bt_spake.c
+```
+
+该工具仅用于离线公开参数核验，不是固件密码实现；不再保留 H2C 工具及其测试向量。
+历史 H2C 版本的源码保存在工作区的 `twister-out-transformed-v2/source.patch`，
+其结果不能代替本版本测试。新 KDF 标签区分 RFC N 版和旧 H2C 版。
+这些参数检查不能验证“无人知道离散对数”。
 
 ## 消息与状态
 
@@ -114,7 +131,8 @@ west twister -T main/tests/bsim/bluetooth/host/security/passkey_entry \
 重复消息测试不等于跨会话重放或完整中间人攻击测试。
 
 独立 Python 仿射运算仅用于离线测试参考，不进入固件；固定小标量仅在向量测试中使用。
-它验证完整 DH 点、两端掩蔽点、共享点与最终哈希的精确结果：
+它验证完整 DH 点、两端掩蔽点、共享点与最终哈希的精确结果；C KAT 还覆盖
+零口令、上界 999999、不同口令、非法点与会话字段篡改：
 
 ```sh
 python3 main/tests/bsim/bluetooth/host/security/passkey_entry/tools/reference_vectors.py \

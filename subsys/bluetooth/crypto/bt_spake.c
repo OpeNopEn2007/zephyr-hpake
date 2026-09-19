@@ -9,11 +9,23 @@
 
 #include "bt_spake.h"
 
-/* Direct-replacement experiment: M = abG from the initial ECDH, N = G.
- * This is not standard SPAKE2 or HPAKE: N = G permits offline password
- * verification after an active exchange. See the passkey_entry test README.
+/* SPAKE experiment: M = abG from the initial ECDH; N is the published
+ * P-256 auxiliary point from RFC 9382 section 6, decoded to X || Y, BE.
+ * Check with passkey_entry/tools/rfc9382_basis.py. No runtime decompression.
+ * This custom dynamic-M composition is not a complete RFC 9382 implementation;
+ * resistance to offline guessing still requires analysis of the full protocol.
  * This adapter deliberately targets the pinned TF-PSA-Crypto builtin backend.
  */
+static const uint8_t spake_n[64] = {
+	0xd8, 0xbb, 0xd6, 0xc6, 0x39, 0xc6, 0x29, 0x37,
+	0xb0, 0x4d, 0x99, 0x7f, 0x38, 0xc3, 0x77, 0x07,
+	0x19, 0xc6, 0x29, 0xd7, 0x01, 0x4d, 0x49, 0xa2,
+	0x4b, 0x4f, 0x98, 0xba, 0xa1, 0x29, 0x2b, 0x49,
+	0x07, 0xd6, 0x0a, 0xa6, 0xbf, 0xad, 0xe4, 0x50,
+	0x08, 0xa6, 0x36, 0x33, 0x7f, 0x51, 0x68, 0xc6,
+	0x4d, 0x9b, 0xd3, 0x60, 0x34, 0x80, 0x8c, 0xd5,
+	0x64, 0x49, 0x0b, 0x1e, 0x65, 0x6e, 0xdb, 0xe7,
+};
 
 static int random_bytes(void *unused, unsigned char *out, size_t len)
 {
@@ -82,7 +94,7 @@ cleanup:
 	return ret;
 }
 
-int bt_spake_generate(struct bt_spake_direct *ctx)
+int bt_spake_generate(struct bt_spake_context *ctx)
 {
 	mbedtls_ecp_group grp;
 	mbedtls_mpi k;
@@ -102,7 +114,7 @@ cleanup:
 /* Multiply secrets separately using ecp_mul, then use muladd only with
  * public coefficients +1/-1. This is not a side-channel audit of the prototype.
  */
-static int masked_operation(struct bt_spake_direct *ctx, bool receive)
+static int masked_operation(struct bt_spake_context *ctx, bool receive)
 {
 	mbedtls_ecp_group grp;
 	mbedtls_ecp_point base, mask, point, result;
@@ -129,7 +141,7 @@ static int masked_operation(struct bt_spake_direct *ctx, bool receive)
 	if (ctx->central != receive) {
 		MBEDTLS_MPI_CHK(read_point(&grp, &base, ctx->m));
 	} else {
-		MBEDTLS_MPI_CHK(mbedtls_ecp_copy(&base, &grp.G));
+		MBEDTLS_MPI_CHK(read_point(&grp, &base, spake_n));
 	}
 	if (receive) {
 		MBEDTLS_MPI_CHK(read_point(&grp, &point, ctx->peer));
@@ -163,29 +175,25 @@ cleanup:
 	return ret;
 }
 
-int bt_spake_mask(struct bt_spake_direct *ctx)
+int bt_spake_mask(struct bt_spake_context *ctx)
 {
 	return masked_operation(ctx, false);
 }
 
-int bt_spake_shared(struct bt_spake_direct *ctx)
+int bt_spake_shared(struct bt_spake_context *ctx)
 {
 	return masked_operation(ctx, true);
 }
 
-int bt_spake_derive(const struct bt_spake_direct *ctx,
+int bt_spake_derive(const struct bt_spake_context *ctx,
 		    const struct bt_spake_transcript *t, uint8_t key[32])
 {
-	static const uint8_t domain[] = "BLE-SPAKE-DIRECT-v1";
-	mbedtls_ecp_group grp;
-	uint8_t n[64], w[32] = {0};
+	static const uint8_t domain[] = "BLE-SPAKE-RFC9382-N-v3";
+	uint8_t w[32] = {0};
 	psa_hash_operation_t hash = PSA_HASH_OPERATION_INIT;
 	size_t len;
 	int ret = 0;
 
-	mbedtls_ecp_group_init(&grp);
-	MBEDTLS_MPI_CHK(mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1));
-	MBEDTLS_MPI_CHK(write_point(&grp, &grp.G, n));
 	sys_put_be32(ctx->password, w + 28);
 	MBEDTLS_MPI_CHK(psa_hash_setup(&hash, PSA_ALG_SHA_256));
 #define HASH(data, size) MBEDTLS_MPI_CHK(psa_hash_update(&hash, data, size))
@@ -197,7 +205,7 @@ int bt_spake_derive(const struct bt_spake_direct *ctx,
 	HASH(t->pka, sizeof(t->pka));
 	HASH(t->pkb, sizeof(t->pkb));
 	HASH(ctx->m, sizeof(ctx->m));
-	HASH(n, sizeof(n));
+	HASH(spake_n, sizeof(spake_n));
 	HASH(ctx->central ? ctx->local : ctx->peer, 64);
 	HASH(ctx->central ? ctx->peer : ctx->local, 64);
 	HASH(w, sizeof(w));
@@ -209,11 +217,10 @@ int bt_spake_derive(const struct bt_spake_direct *ctx,
 cleanup:
 	psa_hash_abort(&hash);
 	mbedtls_platform_zeroize(w, sizeof(w));
-	mbedtls_ecp_group_free(&grp);
 	return ret;
 }
 
-void bt_spake_clear(struct bt_spake_direct *ctx)
+void bt_spake_clear(struct bt_spake_context *ctx)
 {
 	mbedtls_platform_zeroize(ctx, sizeof(*ctx));
 }

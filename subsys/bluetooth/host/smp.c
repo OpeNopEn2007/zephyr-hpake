@@ -157,7 +157,7 @@ enum {
 };
 
 struct spake_state {
-	struct bt_spake_direct crypto;
+	struct bt_spake_context crypto;
 	uint32_t generation;
 	bool m_ready;
 	bool job_pending;
@@ -1900,7 +1900,7 @@ static void smp_reset(struct bt_smp *smp)
 	struct bt_conn *conn = smp->chan.chan.conn;
 
 	if (smp->spake.generation) {
-		LOG_INF("SPAKE direct v1: reset, TX %u PDUs/%u bytes, RX %u PDUs/%u bytes",
+		LOG_INF("SPAKE RFC9382-N v3: reset, TX %u PDUs/%u bytes, RX %u PDUs/%u bytes",
 			smp->spake.tx_pdus, smp->spake.tx_bytes,
 			smp->spake.rx_pdus, smp->spake.rx_bytes);
 	}
@@ -3711,7 +3711,7 @@ void bt_smp_spake_test_fault(enum bt_spake_test_fault fault)
 static uint32_t spake_generation;
 static atomic_t spake_job_busy;
 static struct {
-	struct bt_spake_direct crypto;
+	struct bt_spake_context crypto;
 	uint32_t generation;
 	bool generate;
 } spake_job;
@@ -3720,7 +3720,7 @@ static uint8_t spake_progress(struct bt_smp *smp);
 
 static void spake_worker(struct k_work *work)
 {
-	struct bt_spake_direct crypto = spake_job.crypto;
+	struct bt_spake_context crypto = spake_job.crypto;
 	uint32_t generation = spake_job.generation;
 	bool generate = spake_job.generate;
 	struct bt_smp *smp = &bt_smp_pool[0];
@@ -3800,7 +3800,7 @@ static uint8_t spake_derive_key(struct bt_smp *smp)
 	if (!err) {
 		/* bt_crypto_f5 reverses its W argument before AES-CMAC. */
 		sys_memcpy_swap(smp->dhkey, key, sizeof(key));
-		LOG_INF("SPAKE direct v1: derived f5 input");
+		LOG_INF("SPAKE RFC9382-N v3: derived f5 input");
 	}
 	mbedtls_platform_zeroize(key, sizeof(key));
 	bt_spake_clear(&smp->spake.crypto);
@@ -3842,7 +3842,7 @@ static uint8_t spake_progress_locked(struct bt_smp *smp)
 			/* Na can arrive while our shared-point job is still running. */
 			atomic_set_bit(smp->allowed_cmds, BT_SMP_CMD_PAIRING_RANDOM);
 		}
-		LOG_INF("SPAKE direct v1: send masked point (%s)", central ? "A" : "B");
+		LOG_INF("SPAKE RFC9382-N v3: send masked point (%s)", central ? "A" : "B");
 		if (smp_send(smp, buf, NULL, NULL)) {
 			return BT_SMP_ERR_UNSPECIFIED;
 		}
@@ -3902,7 +3902,7 @@ static uint8_t spake_point(struct bt_smp *smp, struct net_buf *buf)
 {
 	bt_spake_point_swap(smp->spake.crypto.peer, buf->data);
 	smp->spake.peer_ready = true;
-	LOG_INF("SPAKE direct v1: received masked point");
+	LOG_INF("SPAKE RFC9382-N v3: received masked point");
 	return spake_progress(smp);
 }
 
@@ -3923,7 +3923,7 @@ static void spake_dh_ready(const uint8_t *point, void *user)
 	}
 	memcpy(smp->spake.crypto.m, point, 64);
 	smp->spake.m_ready = true;
-	LOG_INF("SPAKE direct v1: full initial DH point ready");
+	LOG_INF("SPAKE RFC9382-N v3: full initial DH point ready");
 	err = spake_progress(smp);
 	if (err) {
 		smp_error(smp, err);
@@ -3948,7 +3948,7 @@ static uint8_t spake_begin(struct bt_smp *smp)
 	/* The peer can notify immediately from its passkey callback. */
 	atomic_set_bit(smp->allowed_cmds, BT_SMP_KEYPRESS_NOTIFICATION);
 	atomic_set_bit(smp->flags, SMP_FLAG_USER);
-	LOG_INF("SPAKE direct v1: waiting for passkey and initial DH");
+	LOG_INF("SPAKE RFC9382-N v3: waiting for passkey and initial DH");
 	cb->passkey_entry(smp->chan.chan.conn);
 	if (!smp->spake.generation) {
 		return 0; /* The application may have cancelled synchronously. */

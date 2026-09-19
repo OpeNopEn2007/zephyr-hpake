@@ -8,7 +8,7 @@
 /* Internal experiment API. All coordinates/scalars here are big endian;
  * points are X || Y, without the SEC1 0x04 prefix. No SMP state lives here.
  */
-struct bt_spake_direct {
+struct bt_spake_context {
 	uint8_t m[64];
 	uint8_t secret[32];
 	uint8_t local[64];
@@ -30,13 +30,13 @@ struct bt_spake_transcript {
 };
 
 int bt_spake_point_mul(const uint8_t scalar[32], const uint8_t point[64], uint8_t out[64]);
-int bt_spake_generate(struct bt_spake_direct *ctx);
+int bt_spake_generate(struct bt_spake_context *ctx);
 /* Deterministic primitive for independent known-answer tests. */
-int bt_spake_mask(struct bt_spake_direct *ctx);
-int bt_spake_shared(struct bt_spake_direct *ctx);
-int bt_spake_derive(const struct bt_spake_direct *ctx,
+int bt_spake_mask(struct bt_spake_context *ctx);
+int bt_spake_shared(struct bt_spake_context *ctx);
+int bt_spake_derive(const struct bt_spake_context *ctx,
 		    const struct bt_spake_transcript *transcript, uint8_t key[32]);
-void bt_spake_clear(struct bt_spake_direct *ctx);
+void bt_spake_clear(struct bt_spake_context *ctx);
 void bt_spake_point_swap(uint8_t out[64], const uint8_t in[64]);
 
 #endif

@@ -49,19 +49,22 @@ def emit(name, data):
 
 
 if __name__ == '__main__':
+    from rfc9382_basis import load_basis
+
+    n = load_basis()
     print('/* SPDX-License-Identifier: Apache-2.0 */')
     print('/* Reproduce with: python3 tools/reference_vectors.py */\n')
     m = mul(35, G)
     w = 123456
     xstar = add(mul(2, G), mul(w, m))
-    ystar = add(mul(3, G), mul(w, G))
+    ystar = add(mul(3, G), mul(w, n))
     shared = mul(6, G)
-    points = [('pka', mul(5, G)), ('pkb', mul(7, G)), ('m', m),
+    points = [('pka', mul(5, G)), ('pkb', mul(7, G)), ('m', m), ('n', n),
               ('xstar', xstar), ('ystar', ystar), ('shared', shared)]
     for name, point in points:
         emit('vector_' + name, enc(point))
         print()
-    transcript = (b'BLE-SPAKE-DIRECT-v1' + bytes(range(28)) + enc(mul(5, G))
-                  + enc(mul(7, G)) + enc(m) + enc(G) + enc(xstar) + enc(ystar)
+    transcript = (b'BLE-SPAKE-RFC9382-N-v3' + bytes(range(28)) + enc(mul(5, G))
+                  + enc(mul(7, G)) + enc(m) + enc(n) + enc(xstar) + enc(ystar)
                   + w.to_bytes(32, 'big') + enc(shared) + bytes(range(32)))
     emit('vector_key', hashlib.sha256(transcript).digest())
