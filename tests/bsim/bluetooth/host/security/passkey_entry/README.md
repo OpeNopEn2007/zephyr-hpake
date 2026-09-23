@@ -1,7 +1,7 @@
 # SPAKE 固定 RFC 9382 辅助点实验 v3
 
 本实验针对两台修改后的 Zephyr 设备，先验证配对与加密通信能否跑通。
-本分支直接以 SPAKE 替换原生 PE，没有原生/实验切换开关，原生基线保存在 Git `main` 分支。
+本分支直接以 SPAKE 替换原生 PE，没有原生/实验切换开关，原生基线保存在 Git `baseline/zephyr-pe` 分支。
 本目录沿用 Zephyr 的 `passkey_entry` 测试 ID，同时承载完整的 SPAKE 集成场景和独立密码 KAT。
 本实验不是原生 BLE 互通实现，也不是已完成安全验证的 SPAKE2/HPAKE。
 
@@ -54,6 +54,9 @@ Y = 07d60aa6bfade45008a636337f5168c64d9bd36034808cd564490b1e656edbe7
 `Z' = (t-w')(X*-w'M)` 并重建确认值。第二版 A 计算的是 `x(tG-wN)`，
 因此旧公式不能原样沿用。这不是全协议安全证明：动态 M、主动选择的前置公钥、
 并发会话及本项目 KDF/f5/f6 的组合仍需单独分析。
+可运行 `python3 tools/chosen_point_regression.py` 复核一个独立仿射曲线样例：
+旧式 `N=G` 等式识别测试口令，固定 RFC N 时同一等式不匹配任何测试候选。
+该脚本只否定这条已知攻击等式，不能排除其他离线验证方法。
 
 在工作区根执行以下命令，解码 RFC 常量、核验曲线和阶、重新压缩比对，
 再逐字节核对固件 N。输出 JSON 保存来源及两种编码：
@@ -141,6 +144,8 @@ cmp /tmp/spake-vectors.h main/tests/bsim/bluetooth/host/security/passkey_entry/s
 ```
 
 默认日志显示阶段、消息操作码、长度和重置时的计数，不输出密码或密钥。
+`pairing_ms` 从 Central 调用 `bt_conn_set_security()` 到收到 L4 或明确配对失败，
+在 BabbleSim 上使用模拟时钟；它用于比较协议阶段的模拟时延，不是实板 CPU 时间或空口时延。
 成功认证阶段应为双方各发送/接收 3 条 SMP PDU、99 字节（双向总计 198 字节）。
 此计数不含首轮公钥、L2CAP/链路层开销、重传或 GATT 数据。测试的 elapsed_ms
 包含连接、同步和数据收发，不能作为密码算法执行时间或实物能耗。

@@ -33,14 +33,15 @@ static int random_bytes(void *unused, unsigned char *out, size_t len)
 	return psa_generate_random(out, len) == PSA_SUCCESS ? 0 : -EIO;
 }
 
-static int read_point(mbedtls_ecp_group *grp, mbedtls_ecp_point *p, const uint8_t in[64])
+static int read_point(mbedtls_ecp_group *grp, mbedtls_ecp_point *p,
+		      const uint8_t in[64], bool validate)
 {
 	uint8_t sec1[65] = {0x04};
 	int ret;
 
 	memcpy(sec1 + 1, in, 64);
 	ret = mbedtls_ecp_point_read_binary(grp, p, sec1, sizeof(sec1));
-	if (ret == 0) {
+	if (ret == 0 && validate) {
 		ret = mbedtls_ecp_check_pubkey(grp, p);
 	}
 	return ret;
@@ -82,7 +83,7 @@ int bt_spake_point_mul(const uint8_t scalar[32], const uint8_t point[64], uint8_
 	mbedtls_ecp_point_init(&result);
 	mbedtls_mpi_init(&k);
 	MBEDTLS_MPI_CHK(mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1));
-	MBEDTLS_MPI_CHK(read_point(&grp, &p, point));
+	MBEDTLS_MPI_CHK(read_point(&grp, &p, point, true));
 	MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&k, scalar, 32));
 	MBEDTLS_MPI_CHK(mbedtls_ecp_mul(&grp, &result, &k, &p, random_bytes, NULL));
 	MBEDTLS_MPI_CHK(write_point(&grp, &result, out));
@@ -139,12 +140,15 @@ static int masked_operation(struct bt_spake_context *ctx, bool receive)
 	MBEDTLS_MPI_CHK(mbedtls_mpi_lset(&one, 1));
 	MBEDTLS_MPI_CHK(mbedtls_mpi_lset(&sign, receive ? -1 : 1));
 	if (ctx->central != receive) {
-		MBEDTLS_MPI_CHK(read_point(&grp, &base, ctx->m));
+		MBEDTLS_MPI_CHK(read_point(&grp, &base, ctx->m, true));
 	} else {
-		MBEDTLS_MPI_CHK(read_point(&grp, &base, spake_n));
+		/* N is a verified compile-time constant. For nonzero w, ecp_mul
+		 * also checks its input point, so skip this duplicate check.
+		 */
+		MBEDTLS_MPI_CHK(read_point(&grp, &base, spake_n, false));
 	}
 	if (receive) {
-		MBEDTLS_MPI_CHK(read_point(&grp, &point, ctx->peer));
+		MBEDTLS_MPI_CHK(read_point(&grp, &point, ctx->peer, true));
 	} else {
 		MBEDTLS_MPI_CHK(mbedtls_ecp_mul(&grp, &point, &secret, &grp.G, random_bytes, NULL));
 	}

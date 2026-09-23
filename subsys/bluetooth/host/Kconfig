@@ -432,8 +432,9 @@ config BT_SMP
 	help
 	  This option enables support for the Security Manager Protocol
 	  (SMP), making it possible to pair devices over LE.
-	  On this research branch, SC Passkey Entry uses direct SPAKE with
-	  M = abG and N = G. Native PE is kept on the main Git branch.
+	  In this fork's research profile, SC Passkey Entry uses a SPAKE
+	  experiment with M = abG and the RFC 9382 P-256 auxiliary point N.
+	  Native PE is retained on the baseline/zephyr-pe Git branch.
 
 if BT_SMP
 

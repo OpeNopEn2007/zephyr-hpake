@@ -34,6 +34,7 @@ static bool is_central, complete, failed;
 static bt_security_t reached_level;
 static enum bt_security_err failure_reason;
 static size_t scenario_index;
+static int64_t pairing_start_ms, pairing_elapsed_ms;
 static atomic_t keypress_received;
 static uint16_t value_handle;
 static uint8_t payload[8], stored[8];
@@ -110,6 +111,10 @@ static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_
 	if (err == BT_SECURITY_ERR_SUCCESS) {
 		reached_level = level;
 		if (level == BT_SECURITY_L4) {
+			if (is_central) {
+				pairing_elapsed_ms =
+					k_uptime_get() - pairing_start_ms;
+			}
 			TEST_ASSERT(cases[scenario_index].error == BT_SECURITY_ERR_SUCCESS,
 				    "Negative case reached L4");
 			k_sem_give(&encrypted_sem);
@@ -191,6 +196,10 @@ static void pairing_complete(struct bt_conn *conn, bool bonded)
 static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 {
 	ARG_UNUSED(conn);
+	if (is_central) {
+		pairing_elapsed_ms =
+			k_uptime_get() - pairing_start_ms;
+	}
 	failed = true;
 	failure_reason = reason;
 	k_sem_give(&pair_sem);
@@ -290,6 +299,7 @@ static void run(bool central)
 		atomic_clear(&keypress_received);
 		reached_level = BT_SECURITY_L1;
 		failure_reason = BT_SECURITY_ERR_SUCCESS;
+		pairing_elapsed_ms = -1;
 		stored_len = 0;
 		k_sem_reset(&pair_sem);
 		k_sem_reset(&encrypted_sem);
@@ -306,6 +316,7 @@ static void run(bool central)
 		}
 		wait_event(&connected_sem, "connection");
 		if (central) {
+			pairing_start_ms = k_uptime_get();
 			TEST_ASSERT(bt_conn_set_security(connection, BT_SECURITY_L4) == 0,
 				    "Security request failed");
 		}
@@ -332,8 +343,10 @@ static void run(bool central)
 			printk("SPAKE keypress notification received role=%s\n",
 			       central ? "A" : "B");
 		}
-		printk("SPAKE CASE %s PASS role=%s elapsed_ms=%lld reason=%d\n", s->name,
-		       central ? "A" : "B", (long long)(k_uptime_get() - start), failure_reason);
+		printk("SPAKE CASE %s PASS role=%s elapsed_ms=%lld "
+		       "pairing_ms=%lld reason=%d\n", s->name, central ? "A" : "B",
+		       (long long)(k_uptime_get() - start),
+		       (long long)pairing_elapsed_ms, failure_reason);
 		if (central) {
 			TEST_ASSERT(bt_conn_disconnect(connection, BT_HCI_ERR_REMOTE_USER_TERM_CONN)
 				    == 0, "Disconnect failed");
