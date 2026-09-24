@@ -133,14 +133,20 @@ west twister -T main/tests/bsim/bluetooth/host/security/passkey_entry \
 `CONFIG_BT_TESTING` 下的注入接口只改变下一条实验点消息；正常实验功能不依赖该接口。
 重复消息测试不等于跨会话重放或完整中间人攻击测试。
 
-独立 Python 仿射运算仅用于离线测试参考，不进入固件；固定小标量仅在向量测试中使用。
-它验证完整 DH 点、两端掩蔽点、共享点与最终哈希的精确结果；C KAT 还覆盖
-零口令、上界 999999、不同口令、非法点与会话字段篡改：
+独立 Python 仿射运算与 `cryptography` 的 AES-CMAC 仅用于离线测试参考，不进入固件；
+固定小标量仅在向量测试中使用。它们验证完整 DH 点、两端掩蔽点、共享点、最终哈希、
+`f5` 的 MacKey/LTK 与双方 `f6` 检查值。新脚本还先核对 Zephyr 自带的 Bluetooth
+`f5/f6` 示例向量；C KAT 覆盖这些组合值、零口令、上界 999999、不同口令、
+非法点与会话字段篡改。离线生成完整头文件需要 Python `cryptography`：
 
 ```sh
 python3 main/tests/bsim/bluetooth/host/security/passkey_entry/tools/reference_vectors.py \
   > /tmp/spake-vectors.h
-cmp /tmp/spake-vectors.h main/tests/bsim/bluetooth/host/security/passkey_entry/src/vectors.h
+printf '\n' >> /tmp/spake-vectors.h
+python3 main/tests/bsim/bluetooth/host/security/passkey_entry/tools/full_schedule_vectors.py \
+  >> /tmp/spake-vectors.h
+sed 's/\r$//' main/tests/bsim/bluetooth/host/security/passkey_entry/src/vectors.h \
+  | cmp /tmp/spake-vectors.h -
 ```
 
 默认日志显示阶段、消息操作码、长度和重置时的计数，不输出密码或密钥。

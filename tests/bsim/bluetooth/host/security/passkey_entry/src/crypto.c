@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <string.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/printk.h>
 #include "babblekit/testcase.h"
+#include "crypto/bt_crypto.h"
 #include "crypto/bt_spake.h"
 #include "vectors.h"
 
@@ -11,7 +13,10 @@ void test_spake_crypto(void)
 	struct bt_spake_context a = {.central = true, .password = 123456};
 	struct bt_spake_context b = {.central = false, .password = 123456};
 	struct bt_spake_transcript t;
+	bt_addr_le_t aa = {0}, bb = {0};
 	uint8_t scalar[32] = {0}, point[64], ka[32], kb[32];
+	uint8_t f5_input[32], mackey[16], ltk[16], ea[16], eb[16];
+	uint8_t r[16] = {0};
 
 	for (int i = 0; i < 7; i++) {
 		t.a[i] = i;
@@ -44,6 +49,22 @@ void test_spake_crypto(void)
 		    "KDF failed");
 	TEST_ASSERT(memcmp(ka, vector_key, 32) == 0 && memcmp(kb, vector_key, 32) == 0,
 		    "KDF differs from independent SHA256 oracle");
+	aa.type = t.a[0];
+	bb.type = t.b[0];
+	memcpy(aa.a.val, t.a + 1, 6);
+	memcpy(bb.a.val, t.b + 1, 6);
+	sys_memcpy_swap(f5_input, ka, sizeof(f5_input));
+	TEST_ASSERT(bt_crypto_f5(f5_input, t.na, t.nb, &aa, &bb, mackey, ltk) == 0,
+		    "f5 failed");
+	TEST_ASSERT(memcmp(mackey, vector_mackey, 16) == 0 &&
+		    memcmp(ltk, vector_ltk, 16) == 0, "f5 differs from independent oracle");
+	sys_put_le32(a.password, r);
+	TEST_ASSERT(bt_crypto_f6(mackey, t.na, t.nb, r, t.preq + 1, &aa, &bb, ea) == 0,
+		    "central f6 failed");
+	TEST_ASSERT(bt_crypto_f6(mackey, t.nb, t.na, r, t.prsp + 1, &bb, &aa, eb) == 0,
+		    "peripheral f6 failed");
+	TEST_ASSERT(memcmp(ea, vector_ea, 16) == 0 && memcmp(eb, vector_eb, 16) == 0,
+		    "f6 differs from independent oracle");
 	t.preq[0] ^= 1;
 	TEST_ASSERT(bt_spake_derive(&a, &t, kb) == 0 && memcmp(ka, kb, 32) != 0,
 		    "Transcript not bound");
@@ -83,5 +104,5 @@ void test_spake_crypto(void)
 	bt_spake_clear(&a);
 	bt_spake_clear(&b);
 	TEST_ASSERT(memcmp(&a, &b, sizeof(a)) == 0, "Context cleanup failed");
-	printk("SPAKE crypto: independent vectors, zero, max, mismatch and invalid point passed\n");
+	printk("SPAKE crypto: point, KDF, f5/f6, boundaries and invalid point passed\n");
 }
